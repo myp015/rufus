@@ -2045,6 +2045,11 @@ out:
 
 static __inline const char* IsAlphaOrBeta(void)
 {
+	// Custom: always present the build as a normal/release version, regardless of
+	// whether the ALPHA/BETA/TEST macros are defined at compile time.
+	// This removes the " (Alpha) " / " (Beta) " suffix from the title and version info.
+	return " ";
+
 #if defined(ALPHA)
 	return " (Alpha) ";
 #elif defined(BETA)
@@ -2688,6 +2693,10 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 				EnableControls(FALSE, FALSE);
 				DownloadISO();
 			} else {
+				// Custom: the image picker should default to the directory where rufus
+				// itself resides (app_dir), instead of relying on the OS's "last opened"
+				// / Downloads folder.
+				char* select_dir = (app_dir[0] != 0) ? app_dir : NULL;
 				if (img_provided) {
 					uprintf("\r\nImage provided: '%s'", image_path);
 					img_provided = FALSE;	// One off thing...
@@ -2699,7 +2708,7 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 					// If declared globaly, lmprintf(MSG_280) would be called on each message...
 					EXT_DECL(img_ext, NULL, __VA_GROUP__(extensions),
 						__VA_GROUP__(lmprintf(MSG_280)));
-					image_path = FileDialog(FALSE, NULL, &img_ext, NULL);
+					image_path = FileDialog(FALSE, select_dir, &img_ext, NULL);
 					if (image_path == NULL) {
 						if (old_image_path != NULL) {
 							// Reselect previous image
@@ -2933,14 +2942,18 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 		// Set 'START' as the selected button if it's enabled, otherwise use 'SELECT', instead
 		SendMessage(hDlg, WM_NEXTDLGCTL, (WPARAM)(IsWindowEnabled(hStart) ? hStart : hSelectImage), TRUE);
 
-#if defined(ALPHA)
+// Custom: ALPHA/TEST release popups are removed so the build always behaves like a
+// normal release, regardless of whether the ALPHA/BETA/TEST macros are defined.
+#if 0
+	#if defined(ALPHA)
 		// Add a VERY ANNOYING popup for Alpha releases, so that people don't start redistributing them
 		MessageBoxA(NULL, "This is an Alpha version of " APPLICATION_NAME " - It is meant to be used for "
 			"testing ONLY and should NOT be distributed as a release.", "ALPHA VERSION", MB_ICONINFORMATION);
-#elif defined(TEST)
+	#elif defined(TEST)
 		// Same thing for Test releases
 		MessageBoxA(NULL, "This is a Test version of " APPLICATION_NAME " - It is meant to be used for "
 			"testing ONLY and should NOT be distributed as a release.", "TEST VERSION", MB_ICONINFORMATION);
+	#endif
 #endif
 		SetDarkModeForChild(hDlg);
 		SubclassStatusBar(hStatus);
@@ -3412,7 +3425,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	uint32_t wue_options;
 	FILE* fd;
 	BOOL attached_console = FALSE, external_loc_file = FALSE, lgp_set = FALSE, automount = TRUE;
-	BOOL disable_hogger = FALSE, previous_enable_HDDs = FALSE, vc = IsRegistryNode(REGKEY_HKCU, vs_reg);
+	BOOL disable_hogger = FALSE, previous_enable_HDDs = FALSE, vc = TRUE;	// Custom: always treat as a valid/certified build (skips the "not released by official developers" dialog)
 	BOOL alt_pressed = FALSE, alt_command = FALSE;
 	BYTE *loc_data;
 	DWORD loc_size, u = 0, size = sizeof(u);
