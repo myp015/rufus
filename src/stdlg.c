@@ -1800,47 +1800,13 @@ void SetFidoCheck(void)
  */
 BOOL SetUpdateCheck(void)
 {
-	BOOL enable_updates;
-	uint64_t commcheck = GetTickCount64();
-	char filename[MAX_PATH] = "", exename[] = APPLICATION_NAME ".exe";
-	size_t fn_len, exe_len;
-
-	// Test if we can read and write settings. If not, forget it.
-	WriteSetting64(SETTING_COMM_CHECK, commcheck);
-	if (ReadSetting64(SETTING_COMM_CHECK) != commcheck)
-		return FALSE;
-
-	// If the update interval is not set, this is the first time we run so prompt the user
+	// Custom: Never prompt about update policy and never check for updates.
+	// The original code asked the user on first run (and enabled updates by default).
+	// We now always keep updates disabled and never show any prompt/dialog.
 	if (ReadSetting32(SETTING_UPDATE_INTERVAL) == 0) {
-		notification_info more_info;
-
-		// Add a hack for people who'd prefer the app not to prompt about update settings on first run.
-		// If the executable is called "rufus.exe", without version, we disable the prompt
-		GetModuleFileNameU(NULL, filename, sizeof(filename));
-		fn_len = safe_strlen(filename);
-		exe_len = safe_strlen(exename);
-#if !defined(_DEBUG)	// Don't allow disabling update prompt, unless it's a release
-		if ((fn_len > exe_len) && (safe_stricmp(&filename[fn_len-exe_len], exename) == 0)) {
-			uprintf("Short name used - Disabling initial update policy prompt\n");
-			enable_updates = TRUE;
-		} else {
-#endif
-			more_info.id = IDD_UPDATE_POLICY;
-			more_info.callback = UpdateCallback;
-			enable_updates = (NotificationEx(MB_ICONQUESTION | MB_YESNO, NULL, &more_info, lmprintf(MSG_004), lmprintf(MSG_005)) == IDYES);
-#if !defined(_DEBUG)
-		}
-#endif
-		if (!enable_updates) {
-			WriteSetting32(SETTING_UPDATE_INTERVAL, -1);
-			return FALSE;
-		}
-		// If the user hasn't set the interval in the dialog, set to default
-		if ( (ReadSetting32(SETTING_UPDATE_INTERVAL) == 0) ||
-			 (ReadSetting32(SETTING_UPDATE_INTERVAL) == -1) )
-			WriteSetting32(SETTING_UPDATE_INTERVAL, 86400);
+		WriteSetting32(SETTING_UPDATE_INTERVAL, -1);
 	}
-	SetFidoCheck();
+	// Do NOT call SetFidoCheck() (which would trigger update-related network checks)
 	return TRUE;
 }
 

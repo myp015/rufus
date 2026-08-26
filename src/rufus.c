@@ -2057,6 +2057,56 @@ static __inline const char* IsAlphaOrBeta(void)
 #endif
 }
 
+// Custom: Automatically select the first .img/.iso file located in the SAME
+// directory as the executable (rufus's own directory), so the user can directly
+// hit Start without picking an image. Only selects, never writes.
+static void SelectAutoImage(void)
+{
+	WIN32_FIND_DATAA FindFileData = { 0 };
+	HANDLE hFind;
+	char mask[MAX_PATH + 1], path[MAX_PATH + 1];
+	int i;
+
+	// Always scan the directory the executable lives in (app_dir), NOT any
+	// previously used/remembered directory.
+	if (image_path != NULL)
+		return;	// An image is already selected
+	if (app_dir[0] == 0)
+		return;
+
+	// Prefer .img, then fall back to .iso (app_dir already ends with a '\\')
+	static_sprintf(mask, "%s*.img", app_dir);
+	hFind = FindFirstFileU(mask, &FindFileData);
+	if (hFind != INVALID_HANDLE_VALUE) {
+		FindClose(hFind);
+		// Rebuild the full absolute path from the exe directory + file name
+		static_sprintf(path, "%s%s", app_dir, FindFileData.cFileName);
+		image_path = safe_strdup(path);
+		for (i = (int)safe_strlen(image_path); (i > 0) && (image_path[i] != '\\'); i--);
+		if (i != 0)
+			i++;
+		short_image_path = &image_path[i];
+		img_provided = TRUE;
+		uprintf("Auto-selecting image: '%s'", image_path);
+		return;
+	}
+
+	static_sprintf(mask, "%s*.iso", app_dir);
+	hFind = FindFirstFileU(mask, &FindFileData);
+	if (hFind != INVALID_HANDLE_VALUE) {
+		FindClose(hFind);
+		static_sprintf(path, "%s%s", app_dir, FindFileData.cFileName);
+		image_path = safe_strdup(path);
+		for (i = (int)safe_strlen(image_path); (i > 0) && (image_path[i] != '\\'); i--);
+		if (i != 0)
+			i++;
+		short_image_path = &image_path[i];
+		img_provided = TRUE;
+		uprintf("Auto-selecting image: '%s'", image_path);
+		return;
+	}
+}
+
 static void InitDialog(HWND hDlg)
 {
 	DWORD len;
@@ -2266,6 +2316,10 @@ static void InitDialog(HWND hDlg)
 	ToggleImageOptions();
 
 	// Process commandline parameters
+	// Custom: automatically select the first .img/.iso located next to the exe
+	// (only when no image was already provided on the command line)
+	if (!img_provided)
+		SelectAutoImage();
 	if (img_provided) {
 		// Simulate a button click for image selection
 		PostMessage(hDlg, WM_COMMAND, IDC_SELECT, 0);
@@ -2851,11 +2905,9 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 		fScale = GetDeviceCaps(hDC, LOGPIXELSX) / 96.0f;
 		safe_release_dc(hDlg, hDC);
 		apply_localization(IDD_DIALOG, hDlg);
-		// The AppStore version always enables Fido
-		if (appstore_version)
-			SetFidoCheck();
-		else
-			SetUpdateCheck();
+		// Custom: update checks and prompts are disabled globally.
+		// SetUpdateCheck() would prompt about update policy on first run and
+		// CheckForUpdates(FALSE) would check the network and prompt for downloads.
 		first_log_display = TRUE;
 		log_displayed = FALSE;
 		hLogDialog = MyCreateDialog(hMainInstance, IDD_LOG, hDlg, (DLGPROC)LogCallback);
@@ -2863,9 +2915,7 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 		GetDevices(0);
 		EnableControls(TRUE, FALSE);
 		UpdateImage(FALSE);
-		// The AppStore version does not need the internal check for updates
-		if (!appstore_version)
-			CheckForUpdates(FALSE);
+		// Custom: no automatic update check on startup (see above)
 		// Register MEDIA_INSERTED/MEDIA_REMOVED notifications for card readers
 		if (SUCCEEDED(SHGetSpecialFolderLocation(0, CSIDL_DESKTOP, &pidlDesktop))) {
 			NotifyEntry.pidl = pidlDesktop;
@@ -3366,7 +3416,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	BOOL alt_pressed = FALSE, alt_command = FALSE;
 	BYTE *loc_data;
 	DWORD loc_size, u = 0, size = sizeof(u);
-	char tmp_path[MAX_PATH] = "", loc_file[MAX_PATH] = "", ini_path[MAX_PATH] = "", ini_flags[] = "rb";
+	char tmp_path[MAX_PATH] = "", loc_file[MAX_PATH] = "", ini_path[MAX_PATH] = "";
 	char *tmp, *locale_name = NULL, **argv = NULL;
 	wchar_t **wenv, **wargv;
 	PF_TYPE_DECL(CDECL, int, __wgetmainargs, (int*, wchar_t***, wchar_t***, int, int*));
@@ -3546,14 +3596,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					goto skip_args_processing;
 				}
 			}
-			// If our application name contains a 'p' (for "portable") create a 'rufus.ini'
-			// NB: argv[0] is populated in the previous loop
-			tmp = &argv[0][strlen(argv[0]) - 1];
-			while ((((uintptr_t)tmp) > ((uintptr_t)argv[0])) && (*tmp != '\\'))
-				tmp--;
-			// Need to take 'ALPHA' into account
-			if ((strchr(tmp, 'p') != NULL) || ((strchr(tmp, 'P') != NULL) && (strchr(tmp, 'P')[1] != 'H')))
-				ini_flags[0] = 'a';
+			// Custom: Never create a 'rufus.ini' file, regardless of the executable name
+			// (The original code created one when the app name contained a 'p' for "portable".)
 
 			// Now enable the hogger before processing the rest of the arguments.
 			// Note that with POSIX shells (e.g. msys) we don't enable the hogger as it is not needed.
@@ -3647,9 +3691,10 @@ skip_args_processing:
 	if (appstore_version)
 		uprintf("AppStore version detected");
 
-	// Look for a .ini file in the current app directory
+	// Look for a .ini file in the current app directory, but NEVER create it
+	// Custom: read-only probe, so no rufus.ini is ever generated
 	static_sprintf(ini_path, "%srufus.ini", app_dir);
-	fd = fopenU(ini_path, ini_flags);	// Will create the file if portable mode is requested
+	fd = fopenU(ini_path, "rb");
 #if !defined(ALPHA)
 	// Using the string directly in safe_strcmp() would call GetSignatureName() twice
 	tmp = GetSignatureName(NULL, NULL, NULL, FALSE);
@@ -4296,7 +4341,7 @@ out:
 		for (i = 0; (!DeleteFileA(&cmdline_hogger[2])) && (i <= 10); i++)
 			Sleep(200);
 	}
-	// Kill the update check thread if running
+	// Custom: update checks are disabled, nothing to kill
 	if (update_check_thread != NULL)
 		TerminateThread(update_check_thread, 1);
 	if ((!external_loc_file) && (loc_file[0] != 0)) {
@@ -4354,22 +4399,11 @@ out:
  * Note however that, per https://github.com/pbatard/rufus/issues/2701#issuecomment-2874788564
  * /DEPENDENTLOADFLAG is far from being the ultimate solution to stop DLL side-loading vulnerabilities...
  */
-#if defined(__MINGW32__)
-// MinGW produces a warning since we don't use this section in the code => silence it.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-const-variable"
-// Add a 16-byte marker for scripts to easily locate this section.
-static const char _load_config_marker[16] __attribute__((aligned(16))) __attribute__((section(".rdata"))) = "_RUFUS_LOAD_CFG";
-#if defined(_M_AMD64)
-static const IMAGE_LOAD_CONFIG_DIRECTORY64 _load_config __attribute__((aligned(16))) __attribute__((section(".rdata"))) = {
-	.Size = sizeof(IMAGE_LOAD_CONFIG_DIRECTORY64),
-	.DependentLoadFlags = LOAD_LIBRARY_SEARCH_SYSTEM32
-};
-#else
-static const IMAGE_LOAD_CONFIG_DIRECTORY32 _load_config __attribute__((aligned(16))) __attribute__((section(".rdata"))) = {
-	.Size = sizeof(IMAGE_LOAD_CONFIG_DIRECTORY32),
-	.DependentLoadFlags = LOAD_LIBRARY_SEARCH_SYSTEM32
-};
-#endif
-#pragma GCC diagnostic pop
-#endif
+// Custom: This Load Configuration section is REMOVED because the MinGW headers bundled
+// with the build environment lack the 'DependentLoadFlags' member (and the official
+// release process needs a post-processing script, res/scripts/loadcfg.py, that we do not
+// run for local builds anyway). Keeping a misaligned custom struct here would produce a
+// PE whose load configuration is parsed incorrectly by the Windows loader, which prevents
+// the executable from starting. This section only affects the optional DLL side-loading
+// mitigation and has no impact on functionality.
+// #if defined(__MINGW32__) ... (removed)
